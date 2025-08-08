@@ -1,0 +1,18 @@
+# Ignore virtual environments
+.venv/
+env/
+venv/
+
+# Ignore raw and processed datasets
+data/raw/
+data/processed/
+
+# Ignore Python cache
+__pycache__/
+
+# Ignore Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Ignore large model files
+*.pt
+*.pth
