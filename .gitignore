@@ -6,6 +6,7 @@ venv/
 # Ignore raw and processed datasets
 data/raw/
 data/processed/
+data/raw/AI_Human.csv
 
 # Ignore Python cache
 __pycache__/
