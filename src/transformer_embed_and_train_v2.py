@@ -182,6 +182,25 @@ def main():
 
     val_metrics, val_errors_df, val_probs, val_preds = eval_split(best_model, X_val, y_val, val_texts, "val")
     test_metrics, test_errors_df, test_probs, test_preds = eval_split(best_model, X_test, y_test, test_texts, "test")
+    # Save full predictions (with probabilities for ROC)
+    if val_probs is not None:
+        val_full_df = pd.DataFrame({
+        "text": val_texts,
+        "true_label": y_val,
+        "predicted_label": val_preds,
+        "pred_proba": val_probs[:, 1]  # prob of positive class
+    })
+    val_full_df.to_csv(REPORTS_DIR / "transformer_errors_val.csv", index=False)
+
+    if test_probs is not None:
+        test_full_df = pd.DataFrame({
+        "text": test_texts,
+        "true_label": y_test,
+        "predicted_label": test_preds,
+        "pred_proba": test_probs[:, 1]  # prob of positive class
+    })
+    test_full_df.to_csv(REPORTS_DIR / "transformer_errors_test.csv", index=False)
+
 
     # Save best model and embeddings
     joblib.dump(best_model, MODELS_DIR / "logreg_transformer_emb_best.joblib")
