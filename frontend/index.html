@@ -1,111 +1,87 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>AI vs Human — Classifier</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-</head>
-<body class="bg-slate-50 text-slate-900 transition-colors duration-300" id="body">
-  <!-- Navbar -->
-  <header class="sticky top-0 z-30 backdrop-blur bg-white/80 border-b border-slate-200">
-    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <div class="h-8 w-8 rounded-xl bg-sky-600"></div>
-        <span class="font-semibold tracking-wide">AI vs Human — Classifier</span>
-        <span class="ml-2 text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">v1</span>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>AI vs Human — Classifier</title>
+    <!-- Tailwind CSS via CDN for rapid prototyping. Includes dark mode variants. -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      // Enable dark mode variants
+      tailwind.config = { darkMode: 'class' };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body id="body" class="bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100 transition-colors duration-300">
+    <!-- Navbar -->
+    <header class="sticky top-0 z-30 backdrop-blur bg-white/80 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700">
+      <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="h-8 w-8 rounded-xl bg-sky-600"></div>
+          <span class="font-semibold tracking-wide">AI vs Human — Classifier</span>
+          <span class="ml-2 text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">v1</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <button id="darkToggle" class="text-sm px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700">Dark</button>
+          <a href="/docs" target="_blank" class="text-sm px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600">API Docs</a>
+        </div>
       </div>
-      <div class="flex items-center gap-3">
-        <button id="darkToggle" class="text-sm px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-100">Dark</button>
-        <a href="/docs" class="text-sm px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-800">API Docs</a>
+    </header>
+
+    <!-- Hero section -->
+    <section class="bg-gradient-to-b from-sky-50 dark:from-slate-800 to-transparent py-8">
+      <div class="max-w-6xl mx-auto px-4">
+        <h1 class="text-3xl md:text-4xl font-bold">Detect AI-generated vs Human-written text</h1>
+        <p class="mt-2 text-slate-600 dark:text-slate-300 max-w-2xl">Paste text, get a prediction with confidence. Every result is saved to history.</p>
       </div>
-    </div>
-  </header>
+    </section>
 
-  <!-- Hero -->
-  <section class="bg-gradient-to-b from-sky-50 to-transparent">
-    <div class="max-w-6xl mx-auto px-4 py-8">
-      <h1 class="text-3xl md:text-4xl font-bold">Detect AI-generated vs Human-written text</h1>
-      <p class="mt-2 text-slate-600 max-w-2xl">Paste text, get a prediction with confidence. Every result is saved to history and all analytics update instantly.</p>
-    </div>
-  </section>
-
-  <!-- Main -->
-  <main class="max-w-6xl mx-auto px-4 pb-20">
-    <div class="grid lg:grid-cols-2 gap-6">
-      <!-- Left: Input & Result -->
-      <div class="space-y-6">
-        <div class="bg-white rounded-2xl shadow-sm border border-slate-200">
-          <div class="p-5">
-            <label for="textInput" class="block text-sm font-medium text-slate-700">Input text</label>
-            <textarea id="textInput" rows="9"
-              class="mt-2 w-full rounded-xl border border-slate-200 p-3 focus:outline-none focus:ring-2 focus:ring-sky-400"
-              placeholder="Paste your text here..."></textarea>
-            <div class="mt-4 flex items-center gap-3">
-              <button id="classifyBtn" class="px-4 py-2 rounded-xl bg-sky-600 text-white font-semibold hover:bg-sky-700 disabled:opacity-60">Classify</button>
-              <button id="historyBtn" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-900 font-semibold border border-slate-200 hover:bg-slate-50">Show History</button>
-              <span id="spinner" class="hidden text-sm text-slate-500">Working…</span>
+    <!-- Main content -->
+    <main class="max-w-6xl mx-auto px-4 pb-20">
+      <div class="flex flex-col lg:flex-row gap-6">
+        <!-- Left column: input & result -->
+        <div class="flex-1 space-y-6">
+          <!-- Input card -->
+          <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700">
+            <div class="p-5">
+              <label for="textInput" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Input text</label>
+              <textarea id="textInput" rows="9" class="mt-2 w-full rounded-xl border border-slate-200 dark:border-slate-600 p-3 focus:outline-none focus:ring-2 focus:ring-sky-400 dark:focus:ring-sky-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-slate-100" placeholder="Paste your text here..."></textarea>
+              <div class="mt-4 flex items-center gap-3">
+                <button id="classifyBtn" class="px-4 py-2 rounded-xl bg-sky-600 text-white font-semibold hover:bg-sky-700 disabled:opacity-60">Classify</button>
+                <button id="historyBtn" class="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-slate-100 font-semibold border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600">Show History</button>
+                <span id="spinner" class="hidden text-sm text-slate-500 dark:text-slate-400">Working…</span>
+              </div>
+              <div id="toast" class="hidden mt-3 rounded-xl bg-rose-100 dark:bg-rose-200 text-rose-800 px-3 py-2 text-sm"></div>
             </div>
-            <div id="toast" class="hidden mt-3 rounded-xl bg-rose-100 text-rose-800 px-3 py-2 text-sm"></div>
+          </div>
+
+          <!-- Result card -->
+          <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700">
+            <div class="p-5">
+              <h2 class="text-lg font-semibold mb-3">Result</h2>
+              <div id="resultBadge" class="hidden inline-flex items-center gap-2 px-3 py-1 rounded-xl text-sm font-semibold border"></div>
+              <pre id="resultBox" class="mt-3 bg-slate-50 dark:bg-slate-700 rounded-xl p-3 text-sm whitespace-pre-wrap min-h-[90px]"></pre>
+              <p class="text-xs text-slate-500 dark:text-slate-400 mt-2">Confidence is probabilistic. Treat 45–55% as “uncertain.”</p>
+            </div>
           </div>
         </div>
-
-        <div class="bg-white rounded-2xl shadow-sm border border-slate-200">
-          <div class="p-5">
-            <h2 class="text-lg font-semibold mb-3">Result</h2>
-            <div id="resultBadge" class="hidden inline-flex items-center gap-2 px-3 py-1 rounded-xl text-sm font-semibold"></div>
-            <pre id="resultBox" class="mt-3 bg-slate-50 rounded-xl p-3 text-sm whitespace-pre-wrap min-h-[90px]"></pre>
-            <p class="text-xs text-slate-500 mt-2">Confidence is probabilistic. Treat 45–55% as “uncertain.”</p>
+        <!-- Right column: history -->
+        <div class="w-full lg:w-1/3 space-y-6" id="historyPanel" style="display: none;">
+          <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-5 h-full flex flex-col">
+            <h3 class="font-semibold mb-2">Recent Predictions</h3>
+            <ul id="historyList" class="space-y-2 text-sm text-slate-700 dark:text-slate-300 flex-1 overflow-y-auto"></ul>
           </div>
         </div>
       </div>
+    </main>
 
-      <!-- Right: Analytics & History -->
-      <div class="space-y-6">
-        <!-- KPI cards -->
-        <div class="grid grid-cols-3 gap-3">
-          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
-            <div class="text-xs text-slate-500">Total</div>
-            <div id="kpiTotal" class="text-2xl font-semibold">0</div>
-          </div>
-          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
-            <div class="text-xs text-slate-500">AI %</div>
-            <div id="kpiAI" class="text-2xl font-semibold">0%</div>
-          </div>
-          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
-            <div class="text-xs text-slate-500">Human %</div>
-            <div id="kpiHuman" class="text-2xl font-semibold">0%</div>
-          </div>
-        </div>
-
-        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-          <h3 class="font-semibold mb-2">Analytics</h3>
-          <canvas id="lineChart" height="170"></canvas>
-          <canvas id="barChart" height="170" class="mt-6"></canvas>
-          <canvas id="histChart" height="170" class="mt-6"></canvas>
-        </div>
-
-        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-          <h3 class="font-semibold mb-2">Recent Predictions</h3>
-          <ul id="historyList" class="space-y-2 text-sm text-slate-700"></ul>
-        </div>
-
-        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-          <h3 class="font-semibold mb-2">Explainability (Week 3)</h3>
-          <p class="text-sm text-slate-600">Use your LIME/Captum PNGs from <code>reports/plots/</code> in your report/demo. We can serve them as static later.</p>
-        </div>
+    <footer class="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+      <div class="max-w-6xl mx-auto px-4 py-4 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
+        <span>Built for Capstone — Dataset → Model → Explainability → UX</span>
+        <span id="footerVersion"></span>
       </div>
-    </div>
-  </main>
+    </footer>
 
-  <footer class="border-t border-slate-200 bg-white">
-    <div class="max-w-6xl mx-auto px-4 py-4 text-xs text-slate-500 flex items-center justify-between">
-      <span>Built for Capstone — Dataset → Model → Explainability → UX</span>
-      <span id="footerVersion"></span>
-    </div>
-  </footer>
-
-  <script src="/static/app.js"></script>
-</body>
+    <script src="/static/app.js"></script>
+  </body>
 </html>
