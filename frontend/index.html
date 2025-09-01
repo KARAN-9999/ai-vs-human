@@ -1,47 +1,111 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>AI vs Human - Demo</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/normalize/8.0.1/normalize.min.css" />
-  <style>
-    body { font-family: Inter, system-ui, sans-serif; padding: 24px; background:#f7fafc; color:#111827; }
-    .container { max-width:900px; margin:0 auto; }
-    textarea { width:100%; height:160px; padding:12px; font-size:14px; border-radius:8px; border:1px solid #d1d5db; }
-    button { background:#0ea5a4; color:white; padding:10px 18px; border-radius:8px; border:none; cursor:pointer; }
-    .card { background:white; padding:16px; border-radius:8px; box-shadow: 0 2px 6px rgba(0,0,0,0.06); margin-top:12px;}
-    .result { font-weight:600; margin-bottom:6px; }
-    pre { background:#0f172a; color:#e6eef6; padding:12px; border-radius:6px; overflow:auto; font-size:13px;}
-  </style>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>AI vs Human — Classifier</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-<body>
-  <div class="container">
-    <h1>AI vs Human - Demo</h1>
-    <p>Paste some text and click <strong>Classify</strong>.</p>
-
-    <div class="card">
-      <textarea id="inputText" placeholder="Paste text here...">This is an article written by a human.</textarea>
-      <div style="display:flex; gap:8px; margin-top:8px;">
-        <button id="btnClassify">Classify</button>
-        <button id="btnHistory">Show History</button>
+<body class="bg-slate-50 text-slate-900 transition-colors duration-300" id="body">
+  <!-- Navbar -->
+  <header class="sticky top-0 z-30 backdrop-blur bg-white/80 border-b border-slate-200">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <div class="h-8 w-8 rounded-xl bg-sky-600"></div>
+        <span class="font-semibold tracking-wide">AI vs Human — Classifier</span>
+        <span class="ml-2 text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">v1</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <button id="darkToggle" class="text-sm px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-100">Dark</button>
+        <a href="/docs" class="text-sm px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-800">API Docs</a>
       </div>
     </div>
+  </header>
 
-    <div id="output" class="card" style="display:none;">
-      <div class="result" id="resTitle"></div>
-      <div id="meta"></div>
-      <h4>Probabilities</h4>
-      <pre id="probs"></pre>
+  <!-- Hero -->
+  <section class="bg-gradient-to-b from-sky-50 to-transparent">
+    <div class="max-w-6xl mx-auto px-4 py-8">
+      <h1 class="text-3xl md:text-4xl font-bold">Detect AI-generated vs Human-written text</h1>
+      <p class="mt-2 text-slate-600 max-w-2xl">Paste text, get a prediction with confidence. Every result is saved to history and all analytics update instantly.</p>
     </div>
+  </section>
 
-    <div id="historyCard" class="card" style="display:none;">
-      <h3>Recent Predictions</h3>
-      <div id="historyList"></div>
+  <!-- Main -->
+  <main class="max-w-6xl mx-auto px-4 pb-20">
+    <div class="grid lg:grid-cols-2 gap-6">
+      <!-- Left: Input & Result -->
+      <div class="space-y-6">
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200">
+          <div class="p-5">
+            <label for="textInput" class="block text-sm font-medium text-slate-700">Input text</label>
+            <textarea id="textInput" rows="9"
+              class="mt-2 w-full rounded-xl border border-slate-200 p-3 focus:outline-none focus:ring-2 focus:ring-sky-400"
+              placeholder="Paste your text here..."></textarea>
+            <div class="mt-4 flex items-center gap-3">
+              <button id="classifyBtn" class="px-4 py-2 rounded-xl bg-sky-600 text-white font-semibold hover:bg-sky-700 disabled:opacity-60">Classify</button>
+              <button id="historyBtn" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-900 font-semibold border border-slate-200 hover:bg-slate-50">Show History</button>
+              <span id="spinner" class="hidden text-sm text-slate-500">Working…</span>
+            </div>
+            <div id="toast" class="hidden mt-3 rounded-xl bg-rose-100 text-rose-800 px-3 py-2 text-sm"></div>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200">
+          <div class="p-5">
+            <h2 class="text-lg font-semibold mb-3">Result</h2>
+            <div id="resultBadge" class="hidden inline-flex items-center gap-2 px-3 py-1 rounded-xl text-sm font-semibold"></div>
+            <pre id="resultBox" class="mt-3 bg-slate-50 rounded-xl p-3 text-sm whitespace-pre-wrap min-h-[90px]"></pre>
+            <p class="text-xs text-slate-500 mt-2">Confidence is probabilistic. Treat 45–55% as “uncertain.”</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Analytics & History -->
+      <div class="space-y-6">
+        <!-- KPI cards -->
+        <div class="grid grid-cols-3 gap-3">
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+            <div class="text-xs text-slate-500">Total</div>
+            <div id="kpiTotal" class="text-2xl font-semibold">0</div>
+          </div>
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+            <div class="text-xs text-slate-500">AI %</div>
+            <div id="kpiAI" class="text-2xl font-semibold">0%</div>
+          </div>
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+            <div class="text-xs text-slate-500">Human %</div>
+            <div id="kpiHuman" class="text-2xl font-semibold">0%</div>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+          <h3 class="font-semibold mb-2">Analytics</h3>
+          <canvas id="lineChart" height="170"></canvas>
+          <canvas id="barChart" height="170" class="mt-6"></canvas>
+          <canvas id="histChart" height="170" class="mt-6"></canvas>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+          <h3 class="font-semibold mb-2">Recent Predictions</h3>
+          <ul id="historyList" class="space-y-2 text-sm text-slate-700"></ul>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+          <h3 class="font-semibold mb-2">Explainability (Week 3)</h3>
+          <p class="text-sm text-slate-600">Use your LIME/Captum PNGs from <code>reports/plots/</code> in your report/demo. We can serve them as static later.</p>
+        </div>
+      </div>
     </div>
+  </main>
 
-  </div>
+  <footer class="border-t border-slate-200 bg-white">
+    <div class="max-w-6xl mx-auto px-4 py-4 text-xs text-slate-500 flex items-center justify-between">
+      <span>Built for Capstone — Dataset → Model → Explainability → UX</span>
+      <span id="footerVersion"></span>
+    </div>
+  </footer>
 
-  <script src="app.js"></script>
+  <script src="/static/app.js"></script>
 </body>
 </html>
