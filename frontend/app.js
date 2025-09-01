@@ -1,6 +1,4 @@
-// Customized frontend/app.js for improved UX
-// This script drives the classification UI, handles dark mode toggling,
-// displays prediction results and manages the recent history panel.
+// Drives UI, dark mode, prediction, history, and analytics charts.
 
 const apiBase = ""; // same origin
 
@@ -16,9 +14,9 @@ const spinner = $("spinner");
 const historyList = $("historyList");
 const footerVersion = $("footerVersion");
 const darkToggle = $("darkToggle");
-const body = $("body");
 const historyPanel = $("historyPanel");
-// KPI elements
+
+// KPI
 const kpiTotal = $("kpiTotal");
 const kpiAI = $("kpiAI");
 const kpiHuman = $("kpiHuman");
@@ -26,14 +24,12 @@ const kpiHuman = $("kpiHuman");
 // Charts
 let lineChart, barChart, histChart;
 
-// Show toast notification
 function showToast(msg) {
   toast.textContent = msg;
   toast.classList.remove("hidden");
   setTimeout(() => toast.classList.add("hidden"), 3500);
 }
 
-// Render the badge based on label and confidence
 function setBadge(label, confidence) {
   badge.classList.remove("hidden");
   const pct = (confidence * 100).toFixed(1);
@@ -50,7 +46,6 @@ function setBadge(label, confidence) {
   }
 }
 
-// Classification function
 async function classify() {
   const text = (input.value || "").trim();
   if (!text) return showToast("Please paste some text.");
@@ -69,7 +64,6 @@ async function classify() {
     if (!res.ok) return showToast(`Error ${res.status}: ${payload.detail || "Prediction failed"}`);
 
     const { prediction, confidence, probabilities, model, runtime_seconds, timestamp } = payload;
-    // Use an "unsure" label if confidence is near the boundary
     const label = (confidence >= 0.55) ? prediction : "Unsure";
     setBadge(label, confidence);
     result.textContent =
@@ -79,10 +73,11 @@ Probabilities: ${JSON.stringify(probabilities)}
 Model       : ${model?.hf_model_name || "-"}
 Runtime     : ${runtime_seconds}s
 When        : ${timestamp}`;
-    // Update history and analytics panels if visible
+
+    // Always refresh analytics; history only if visible
+    await refreshAnalytics();
     if (historyPanel.style.display !== "none") {
       await refreshHistory();
-      await refreshAnalytics();
     }
   } catch (e) {
     showToast(`Network/JS error: ${String(e)}`);
@@ -92,10 +87,9 @@ When        : ${timestamp}`;
   }
 }
 
-// Fetch and render recent history
 async function refreshHistory() {
   try {
-    const res = await fetch(`${apiBase}/history?limit=20`);
+    const res = await fetch(`${apiBase}/history?limit=20`, { cache: "no-store" });
     const data = await res.json().catch(() => ({history: []}));
     historyList.innerHTML = "";
     (data.history || []).forEach(item => {
@@ -111,7 +105,6 @@ async function refreshHistory() {
   }
 }
 
-// Toggle history panel visibility
 function toggleHistory() {
   if (historyPanel.style.display === "none" || !historyPanel.style.display) {
     historyPanel.style.display = "block";
@@ -122,51 +115,57 @@ function toggleHistory() {
   }
 }
 
-// Initialize dark mode and toggle handler
 function initDarkMode() {
   const saved = localStorage.getItem("dark");
-  if (saved === "1") {
-    document.documentElement.classList.add("dark");
-  }
-  darkToggle.addEventListener("click", () => {
+  if (saved === "1") document.documentElement.classList.add("dark");
+  $("darkToggle").addEventListener("click", () => {
     const on = document.documentElement.classList.toggle("dark");
     localStorage.setItem("dark", on ? "1" : "0");
   });
 }
 
-// Build or update the charts given analytics data
 function buildOrUpdateCharts(analytics) {
   const ctxL = document.getElementById("lineChart").getContext("2d");
   const ctxB = document.getElementById("barChart").getContext("2d");
   const ctxH = document.getElementById("histChart").getContext("2d");
-  const labels = (analytics.last_50 || []).map(x => x.ts);
-  const aiSeries = (analytics.last_50 || []).map(x => x.prediction === "AI" ? x.confidence : 0);
+
+  // friendlier HH:MM:SS labels
+  const labels = (analytics.last_50 || []).map(x =>
+    (x.ts.includes("T") ? x.ts.split("T")[1].replace("Z","") : x.ts).slice(0,8)
+  );
+  const aiSeries    = (analytics.last_50 || []).map(x => x.prediction === "AI" ? x.confidence : 0);
   const humanSeries = (analytics.last_50 || []).map(x => x.prediction === "Human" ? x.confidence : 0);
+
   if (lineChart) lineChart.destroy();
   lineChart = new Chart(ctxL, {
     type: "line",
-    data: { labels, datasets: [ { label: "AI (last 50)", data: aiSeries, borderColor: "#0ea5e9", backgroundColor: "rgba(14,165,233,0.3)" }, { label: "Human (last 50)", data: humanSeries, borderColor: "#10b981", backgroundColor: "rgba(16,185,129,0.3)" } ] },
-    options: { responsive: true, maintainAspectRatio: false }
+    data: { labels, datasets: [
+      { label: "AI (last 50)", data: aiSeries, borderColor: "#0ea5e9", backgroundColor: "rgba(14,165,233,0.3)", tension: 0.25 },
+      { label: "Human (last 50)", data: humanSeries, borderColor: "#10b981", backgroundColor: "rgba(16,185,129,0.3)", tension: 0.25 }
+    ]},
+    options: { responsive: true, maintainAspectRatio: false, animation: false }
   });
+
   if (barChart) barChart.destroy();
   barChart = new Chart(ctxB, {
     type: "bar",
     data: {
       labels: Object.keys(analytics.avg_confidence_by_label || {}),
-      datasets: [ { label: "Avg confidence", data: Object.values(analytics.avg_confidence_by_label || {}), backgroundColor: ["#0ea5e9", "#10b981"] } ]
+      datasets: [{ label: "Avg confidence", data: Object.values(analytics.avg_confidence_by_label || {}), backgroundColor: ["#0ea5e9", "#10b981"] }]
     },
-    options: { responsive: true, maintainAspectRatio: false }
+    options: { responsive: true, maintainAspectRatio: false, animation: false, scales: { y: { beginAtZero: true, max: 1 } } }
   });
+
   if (histChart) histChart.destroy();
   histChart = new Chart(ctxH, {
     type: "bar",
     data: {
       labels: ["0–0.1","0.1–0.2","0.2–0.3","0.3–0.4","0.4–0.5","0.5–0.6","0.6–0.7","0.7–0.8","0.8–0.9","0.9–1.0"],
-      datasets: [ { label: "Confidence histogram", data: analytics.confidence_histogram_bins || [], backgroundColor: "#6366f1" } ]
+      datasets: [{ label: "Confidence histogram", data: analytics.confidence_histogram_bins || [], backgroundColor: "#6366f1" }]
     },
-    options: { responsive: true, maintainAspectRatio: false }
+    options: { responsive: true, maintainAspectRatio: false, animation: false, scales: { y: { beginAtZero: true } } }
   });
-  // Update KPI counts
+
   const totals = analytics.totals_by_label || {};
   const total = (totals.AI || 0) + (totals.Human || 0);
   kpiTotal.textContent = total;
@@ -174,10 +173,9 @@ function buildOrUpdateCharts(analytics) {
   kpiHuman.textContent = total ? `${Math.round((totals.Human || 0)/total*100)}%` : "0%";
 }
 
-// Fetch analytics and update charts
 async function refreshAnalytics() {
   try {
-    const res = await fetch(`${apiBase}/analytics`);
+    const res = await fetch(`${apiBase}/analytics`, { cache: "no-store" });
     const data = await res.json().catch(() => ({}));
     buildOrUpdateCharts(data);
   } catch (e) {
@@ -185,10 +183,9 @@ async function refreshAnalytics() {
   }
 }
 
-// Show model version info (optional /version endpoint)
 async function showVersion() {
   try {
-    const r = await fetch(`${apiBase}/version`);
+    const r = await fetch(`${apiBase}/version`, { cache: "no-store" });
     if (r.ok) {
       const j = await r.json();
       footerVersion.textContent = `Model loaded: ${j.clf_loaded ? "Yes" : "No"} · ${j.hf_model_name || "-"}`;
@@ -196,9 +193,9 @@ async function showVersion() {
   } catch {}
 }
 
-// Event listeners
 btn.addEventListener("click", classify);
 historyBtn.addEventListener("click", toggleHistory);
+
 window.addEventListener("load", async () => {
   try { await fetch(`${apiBase}/health`); } catch {}
   initDarkMode();
@@ -206,3 +203,9 @@ window.addEventListener("load", async () => {
   await refreshAnalytics();
   showVersion();
 });
+
+// Poll every 5s
+setInterval(() => {
+  refreshAnalytics();
+  if (historyPanel.style.display !== "none") refreshHistory();
+}, 5000);
