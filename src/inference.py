@@ -22,13 +22,14 @@ from typing import Dict, Tuple
 
 try:
     import torch
-    from transformers import AutoTokenizer, AutoModel
+    from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
     import joblib
 except Exception:  # noqa: BLE001
     # If heavy deps are missing inference will fall back to defaults
     torch = None  # type: ignore
     AutoTokenizer = None  # type: ignore
     AutoModel = None  # type: ignore
+    AutoModelForSequenceClassification = None  # type: ignore
     joblib = None  # type: ignore
 
 
@@ -36,12 +37,16 @@ except Exception:  # noqa: BLE001
 # Allow overriding of model names and paths via environment variables
 HF_MODEL_NAME = os.getenv("HF_MODEL_NAME", "distilroberta-base")
 MODEL_DIR = os.getenv("MODELS_DIR", "models")
-# Default classifier path: prefer the transformer embedding model if present
+# Default classifier path for sklearn model (frozen embeddings)
 DEFAULT_CLF = "logreg_transformer_emb_best.joblib"
 CLF_PATH = os.path.join(MODEL_DIR, os.getenv("CLF_FILENAME", DEFAULT_CLF))
+HF_CLASSIFIER_DIR = os.getenv("HF_CLASSIFIER_DIR")  # directory of a fine‑tuned HF model
 
 EMB_CACHE: dict[str, object] = {}
 LABELS = ["AI", "Human"]  # order matters for probability mapping
+
+# Cache for the Hugging Face classifier model and tokenizer
+HF_CLASSIFIER_CACHE: Dict[str, object] = {}
 
 
 def _load_hf() -> Tuple[object | None, object | None]:
@@ -99,6 +104,31 @@ def _load_clf():
 _CLF = _load_clf()
 
 
+def _load_hf_classifier():
+    """Load a fine‑tuned Hugging Face sequence classification model, if configured.
+
+    If the environment variable ``HF_CLASSIFIER_DIR`` points to a directory containing
+    ``config.json`` and ``pytorch_model.bin`` the model and tokenizer are loaded and
+    cached. Returns (tokenizer, model) or (None, None) if unavailable.
+    """
+    if not HF_CLASSIFIER_DIR:
+        return None, None
+    if HF_CLASSIFIER_DIR in HF_CLASSIFIER_CACHE:
+        return HF_CLASSIFIER_CACHE[HF_CLASSIFIER_DIR]
+    if torch is None or AutoModelForSequenceClassification is None or AutoTokenizer is None:
+        return None, None
+    if not os.path.isdir(HF_CLASSIFIER_DIR):
+        return None, None
+    try:
+        tok = AutoTokenizer.from_pretrained(HF_CLASSIFIER_DIR)
+        clf = AutoModelForSequenceClassification.from_pretrained(HF_CLASSIFIER_DIR)
+        clf.eval()
+        HF_CLASSIFIER_CACHE[HF_CLASSIFIER_DIR] = (tok, clf)
+        return tok, clf
+    except Exception:
+        return None, None
+
+
 def predict_text(text: str) -> Tuple[str, Dict[str, float], Dict]:
     """Predict whether the input text is AI‑generated or Human.
 
@@ -114,38 +144,68 @@ def predict_text(text: str) -> Tuple[str, Dict[str, float], Dict]:
     start = time.time()
     label = "AI"
     probs: Dict[str, float] = {"AI": 0.5, "Human": 0.5}
-    if _CLF is not None:
-        emb = _embed(text)
-        if emb is not None:
-            try:
-                if hasattr(_CLF, "predict_proba"):
-                    p = _CLF.predict_proba(emb)[0]
-                    # Map probabilities using classifier's classes_ attribute
-                    if hasattr(_CLF, "classes_"):
-                        cls_to_idx = {c: i for i, c in enumerate(_CLF.classes_)}
-                        ai_p = float(p[cls_to_idx.get("AI", 1 if "AI" not in cls_to_idx else 0)])
-                        human_p = float(p[cls_to_idx.get("Human", 0)])
+    # Attempt to use a fine‑tuned HF classifier if configured
+    tok_hf_clf, clf_hf = _load_hf_classifier()
+    if tok_hf_clf is not None and clf_hf is not None:
+        try:
+            enc = tok_hf_clf(
+                text,
+                return_tensors="pt",
+                truncation=True,
+                padding=True,
+                max_length=256,
+            )
+            with torch.no_grad():
+                logits = clf_hf(**enc).logits  # [1, num_labels]
+            prob_tensor = torch.nn.functional.softmax(logits, dim=-1)[0]
+            # Determine index mapping based on model config (id2label)
+            id2label = getattr(clf_hf.config, "id2label", {0: "Human", 1: "AI"})
+            inv_map = {v: k for k, v in id2label.items()}
+            ai_idx = inv_map.get("AI", 1)
+            human_idx = inv_map.get("Human", 0)
+            ai_p = float(prob_tensor[ai_idx])
+            human_p = float(prob_tensor[human_idx])
+            probs = {"AI": ai_p, "Human": human_p}
+            label = "AI" if ai_p >= human_p else "Human"
+        except Exception:
+            # fallback to using sklearn classifier if HF classifier fails
+            tok_hf_clf = None
+            clf_hf = None
+
+    if tok_hf_clf is None or clf_hf is None:
+        # Use sklearn classifier on frozen embeddings if available
+        if _CLF is not None:
+            emb = _embed(text)
+            if emb is not None:
+                try:
+                    if hasattr(_CLF, "predict_proba"):
+                        p = _CLF.predict_proba(emb)[0]
+                        # Map probabilities using classifier's classes_ attribute
+                        if hasattr(_CLF, "classes_"):
+                            cls_to_idx = {c: i for i, c in enumerate(_CLF.classes_)}
+                            ai_p = float(p[cls_to_idx.get("AI", 1 if "AI" not in cls_to_idx else 0)])
+                            human_p = float(p[cls_to_idx.get("Human", 0)])
+                        else:
+                            ai_p, human_p = float(p[1]), float(p[0])
                     else:
-                        ai_p, human_p = float(p[1]), float(p[0])
-                else:
-                    pred = int(_CLF.predict(emb)[0])
-                    ai_p = 0.9 if pred == 1 else 0.1
-                    human_p = 1 - ai_p
-                probs = {"AI": ai_p, "Human": human_p}
-                label = "AI" if probs["AI"] >= probs["Human"] else "Human"
-            except Exception:
+                        pred = int(_CLF.predict(emb)[0])
+                        ai_p = 0.9 if pred == 1 else 0.1
+                        human_p = 1 - ai_p
+                    probs = {"AI": ai_p, "Human": human_p}
+                    label = "AI" if probs["AI"] >= probs["Human"] else "Human"
+                except Exception:
+                    probs = {"AI": 0.6, "Human": 0.4}
+                    label = "AI"
+            else:
+                # no embedding available (transformers not installed)
                 probs = {"AI": 0.6, "Human": 0.4}
                 label = "AI"
         else:
-            # no embedding available (transformers not installed)
-            probs = {"AI": 0.6, "Human": 0.4}
+            # no classifier found yet; default fallback
+            probs = {"AI": 0.55, "Human": 0.45}
             label = "AI"
-    else:
-        # no classifier found yet; default fallback
-        probs = {"AI": 0.55, "Human": 0.45}
-        label = "AI"
     meta = {
-        "model_name": HF_MODEL_NAME,
+        "model_name": HF_CLASSIFIER_DIR or HF_MODEL_NAME,
         "runtime_seconds": round(time.time() - start, 4),
         "timestamp": datetime.utcnow().isoformat() + "Z",
     }
