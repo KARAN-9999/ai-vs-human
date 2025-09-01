@@ -9,7 +9,7 @@ from pathlib import Path
 from sklearn.model_selection import train_test_split
 
 # CONFIG
-INPUT_CSV = Path("data/raw/AI_Human.csv")
+INPUT_CSV = Path("data/raw/dataset.csv")
 OUT_DIR = Path("data/processed")
 DESIRED_PER_CLASS = 5000   # how many AI and Human samples to keep
 MIN_WORDS = 100

@@ -1,12 +1,19 @@
-# src/train_transformer_emb_v2.py
 """
-train_transformer_emb_v2.py
+Transformer embedding extraction and classifier training (v2).
 
-- Extracts transformer embeddings (mean pooling) for train/val/test (if not present).
-- Trains LogisticRegression with a small grid search on C values using validation F1 to pick best.
-- Auto-detects label encoding; prints which class is label=1 (positive).
-- Saves: embeddings (.npy), best model (.joblib), label encoder, metrics JSON, top-10 misclassified CSV,
-  confusion matrices and ROC plots, and a transformer_summary.md in reports/.
+This script is adapted from the original repository to automatically
+detect whether the combined dataset produced by
+``scripts/preprocess_all.py`` is available. It reads the cleaned train,
+validation and test splits from ``data/processed`` and extracts
+transformer embeddings using a HuggingFace model (default:
+``distilroberta-base``). A Logistic Regression classifier is trained
+with a small grid search over the regularisation parameter C. The best
+model and embeddings are saved alongside metrics, error samples and
+plots. If combined splits (``*_full_clean.csv``) exist, they are used;
+otherwise the Kaggle splits (``*_clean.csv``) are loaded.
+
+Note: This script requires the ``transformers`` and ``torch`` packages.
+Run ``pip install transformers torch`` if they are not installed.
 """
 
 import os
@@ -25,7 +32,16 @@ from transformers import AutoTokenizer, AutoModel
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, roc_curve, auc
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix,
+    roc_curve,
+    auc,
+)
+
 
 # ------------------------
 # Config / paths
@@ -44,30 +60,38 @@ EMB_DIR.mkdir(parents=True, exist_ok=True)
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Grid for LR
+# Hyperparameter grid for LogisticRegression
 C_GRID = [0.01, 0.1, 1, 10]
+
 
 # ------------------------
 # Helpers
 # ------------------------
-def mean_pooling(hidden_states, attention_mask):
+def mean_pooling(hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> np.ndarray:
+    """Apply mean pooling on the last hidden states using the attention mask."""
     mask = attention_mask.unsqueeze(-1).to(hidden_states.dtype)
     masked = hidden_states * mask
     summed = masked.sum(dim=1)
     counts = mask.sum(dim=1).clamp(min=1e-9)
     return (summed / counts).cpu().numpy()
 
-def get_embeddings(texts, tokenizer, model, device, batch_size=BATCH_SIZE):
+
+def get_embeddings(
+    texts: list[str], tokenizer: AutoTokenizer, model: AutoModel, device: torch.device, batch_size: int = BATCH_SIZE
+) -> np.ndarray:
+    """Extract embeddings for a list of texts using batching."""
     model.eval()
-    embeddings = []
+    embeddings: list[np.ndarray] = []
     with torch.no_grad():
         for i in tqdm(range(0, len(texts), batch_size), desc="Embedding batches"):
-            batch_texts = texts[i: i + batch_size]
-            enc = tokenizer(batch_texts,
-                            padding="longest",
-                            truncation=True,
-                            max_length=MAX_LEN,
-                            return_tensors="pt")
+            batch_texts = texts[i : i + batch_size]
+            enc = tokenizer(
+                batch_texts,
+                padding="longest",
+                truncation=True,
+                max_length=MAX_LEN,
+                return_tensors="pt",
+            )
             input_ids = enc["input_ids"].to(device)
             attention_mask = enc["attention_mask"].to(device)
             out = model(input_ids=input_ids, attention_mask=attention_mask, return_dict=True)
@@ -76,70 +100,83 @@ def get_embeddings(texts, tokenizer, model, device, batch_size=BATCH_SIZE):
             embeddings.append(batch_emb)
     return np.vstack(embeddings)
 
-def save_metrics_json(path: Path, obj: dict):
-    with open(path, "w") as f:
-        json.dump(obj, f, indent=4)
 
-def ensure_embeddings_exist(split: str, tokenizer, model, device, df_texts):
+def ensure_embeddings_exist(
+    split: str, tokenizer: AutoTokenizer, model: AutoModel, device: torch.device, texts: list[str]
+) -> np.ndarray:
+    """Load embeddings from disk if they exist; otherwise extract and save them."""
     emb_path = EMB_DIR / f"transformer_{split}_embeddings.npy"
     if emb_path.exists():
         print(f"[skip] embeddings exist: {emb_path}")
         return np.load(emb_path)
     print(f"[create] extracting embeddings for {split} (this may take a while)...")
-    arr = get_embeddings(df_texts, tokenizer, model, device)
+    arr = get_embeddings(texts, tokenizer, model, device)
     np.save(emb_path, arr)
     print(f"Saved embeddings: {emb_path} (shape={arr.shape})")
     return arr
 
-# ------------------------
-# Main pipeline
-# ------------------------
-def main():
-    # Load CSVs
-    train_df = pd.read_csv(DATA_DIR / "train_clean.csv")
-    val_df = pd.read_csv(DATA_DIR / "val_clean.csv")
-    test_df = pd.read_csv(DATA_DIR / "test_clean.csv")
 
+def load_splits() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load train/val/test DataFrames, preferring combined splits if present."""
+    train_full = DATA_DIR / "train_full_clean.csv"
+    val_full = DATA_DIR / "val_full_clean.csv"
+    test_full = DATA_DIR / "test_full_clean.csv"
+    if train_full.exists() and val_full.exists() and test_full.exists():
+        print("[data] Using combined dataset for transformer training.")
+        train_df = pd.read_csv(train_full)
+        val_df = pd.read_csv(val_full)
+        test_df = pd.read_csv(test_full)
+        return train_df, val_df, test_df
+    # Fallback to Kaggle splits
+    train_clean = DATA_DIR / "train_clean.csv"
+    val_clean = DATA_DIR / "val_clean.csv"
+    test_clean = DATA_DIR / "test_clean.csv"
+    if not (train_clean.exists() and val_clean.exists() and test_clean.exists()):
+        raise FileNotFoundError(
+            "Could not find any cleaned dataset splits. Run src/preprocess.py first."
+        )
+    print("[data] Using Kaggle dataset for transformer training.")
+    return (
+        pd.read_csv(train_clean),
+        pd.read_csv(val_clean),
+        pd.read_csv(test_clean),
+    )
+
+
+def main() -> None:
+    # Load the splits
+    train_df, val_df, test_df = load_splits()
     train_texts = train_df["text"].astype(str).tolist()
     val_texts = val_df["text"].astype(str).tolist()
     test_texts = test_df["text"].astype(str).tolist()
 
-    # device and model
+    # Device and model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Device:", device)
-
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModel.from_pretrained(MODEL_NAME).to(device)
 
-    # Ensure embeddings exist (or create them)
+    # Extract or load embeddings
     X_train = ensure_embeddings_exist("train", tokenizer, model, device, train_texts)
     X_val = ensure_embeddings_exist("val", tokenizer, model, device, val_texts)
     X_test = ensure_embeddings_exist("test", tokenizer, model, device, test_texts)
 
-    # Label encode
+    # Label encoding
     le = LabelEncoder()
     y_train = le.fit_transform(train_df["label"].astype(str))
     y_val = le.transform(val_df["label"].astype(str))
     y_test = le.transform(test_df["label"].astype(str))
-
     joblib.dump(le, MODELS_DIR / "label_encoder_transformer.joblib")
-    label_mapping = {int(i): int(i) for i in range(len(le.classes_))}
-    # also save mapping name->int
-    mapping_name_to_int = {name: int(idx) for idx, name in enumerate(le.classes_)}
     print("Label classes:", list(le.classes_))
-    # which class is label==1?
-    if 1 < len(le.classes_):
+    if len(le.classes_) > 1:
         print(f"Positive class label=1 -> {le.inverse_transform([1])[0]}")
-    else:
-        print("Warning: only one class found in label encoder!")
 
-    # Grid search on C (train -> val)
+    # Grid search over C to pick best model on validation F1
     best_C = None
     best_f1 = -1.0
-    best_model = None
-
+    best_model: LogisticRegression | None = None
     for C in C_GRID:
-        clf = LogisticRegression(C=C, max_iter=2000)
+        clf = LogisticRegression(C=C, max_iter=2_000)
         clf.fit(X_train, y_train)
         y_val_pred = clf.predict(X_val)
         f1 = f1_score(y_val, y_val_pred, average="weighted", zero_division=0)
@@ -148,84 +185,84 @@ def main():
             best_f1 = f1
             best_C = C
             best_model = clf
-
     print(f"Selected best_C={best_C} with val F1={best_f1:.6f}")
 
-    # Evaluate best model on val & test
-    def eval_split(clf, X, y, texts, split_name):
+    # Evaluate best model
+    def eval_split(clf: LogisticRegression, X: np.ndarray, y: np.ndarray, texts: list[str], split_name: str):
         y_pred = clf.predict(X)
         metrics = {
             "accuracy": float(accuracy_score(y, y_pred)),
             "precision": float(precision_score(y, y_pred, average="weighted", zero_division=0)),
             "recall": float(recall_score(y, y_pred, average="weighted", zero_division=0)),
-            "f1": float(f1_score(y, y_pred, average="weighted", zero_division=0))
+            "f1": float(f1_score(y, y_pred, average="weighted", zero_division=0)),
         }
-        # top misclassified
+        # Build error DataFrame with prediction probabilities for ROC curves
+        probs = clf.predict_proba(X) if hasattr(clf, "predict_proba") else None
         errors = []
-        probs = None
-        if hasattr(clf, "predict_proba"):
-            probs = clf.predict_proba(X)
-        for i, (txt, true, pred) in enumerate(zip(texts, y, y_pred)):
-            if true != pred:
+        for i, (txt, true_lbl, pred_lbl) in enumerate(zip(texts, y, y_pred)):
+            if true_lbl != pred_lbl:
                 rec = {
                     "index": int(i),
                     "text": txt,
-                    "true_label": int(true),
-                    "predicted_label": int(pred)
+                    "true_label": int(true_lbl),
+                    "predicted_label": int(pred_lbl),
                 }
                 if probs is not None:
                     rec["pred_proba"] = float(probs[i].max())
                 errors.append(rec)
-        # return metrics and errors df
         errors_df = pd.DataFrame(errors)
         return metrics, errors_df, probs, y_pred
 
     val_metrics, val_errors_df, val_probs, val_preds = eval_split(best_model, X_val, y_val, val_texts, "val")
     test_metrics, test_errors_df, test_probs, test_preds = eval_split(best_model, X_test, y_test, test_texts, "test")
-    # Save full predictions (with probabilities for ROC)
+
+    # Save full predictions (useful for ROC curves)
     if val_probs is not None:
         val_full_df = pd.DataFrame({
-        "text": val_texts,
-        "true_label": y_val,
-        "predicted_label": val_preds,
-        "pred_proba": val_probs[:, 1]  # prob of positive class
-    })
-    val_full_df.to_csv(REPORTS_DIR / "transformer_errors_val.csv", index=False)
-
+            "text": val_texts,
+            "true_label": y_val,
+            "predicted_label": val_preds,
+            "pred_proba": val_probs[:, 1] if val_probs.shape[1] > 1 else val_probs[:, 0],
+        })
+        val_full_df.to_csv(REPORTS_DIR / "transformer_errors_val.csv", index=False)
     if test_probs is not None:
         test_full_df = pd.DataFrame({
-        "text": test_texts,
-        "true_label": y_test,
-        "predicted_label": test_preds,
-        "pred_proba": test_probs[:, 1]  # prob of positive class
-    })
-    test_full_df.to_csv(REPORTS_DIR / "transformer_errors_test.csv", index=False)
+            "text": test_texts,
+            "true_label": y_test,
+            "predicted_label": test_preds,
+            "pred_proba": test_probs[:, 1] if test_probs.shape[1] > 1 else test_probs[:, 0],
+        })
+        test_full_df.to_csv(REPORTS_DIR / "transformer_errors_test.csv", index=False)
 
-
-    # Save best model and embeddings
+    # Save model and embeddings
     joblib.dump(best_model, MODELS_DIR / "logreg_transformer_emb_best.joblib")
     np.save(EMB_DIR / "transformer_train_embeddings.npy", X_train)
     np.save(EMB_DIR / "transformer_val_embeddings.npy", X_val)
     np.save(EMB_DIR / "transformer_test_embeddings.npy", X_test)
 
-    # Save metrics + meta
+    # Build results dictionary
     results = {
         "best_C": best_C,
         "label_classes": list(le.classes_),
         "val": val_metrics,
-        "test": test_metrics
+        "test": test_metrics,
     }
-    save_path = REPORTS_DIR / "transformer_emb_results_v2.json"
-    save_metrics_json(save_path, results)
 
-    # Save error CSVs (top 10 misclassified)
-    val_errors_df.sort_values(by="pred_proba", ascending=False, inplace=True, ignore_index=True)
-    test_errors_df.sort_values(by="pred_proba", ascending=False, inplace=True, ignore_index=True)
-    val_errors_df.head(50).to_csv(REPORTS_DIR / "transformer_errors_val_top50.csv", index=False)
-    test_errors_df.head(50).to_csv(REPORTS_DIR / "transformer_errors_test_top50.csv", index=False)
+    # Save metrics JSON (v2)
+    results_path = REPORTS_DIR / "transformer_emb_results_v2.json"
+    with open(results_path, "w") as f:
+        json.dump(results, f, indent=4)
+
+    # Save error samples (top 50 based on probability)
+    if not val_errors_df.empty:
+        val_errors_df.sort_values(by="pred_proba", ascending=False, inplace=True, ignore_index=True)
+        val_errors_df.head(50).to_csv(REPORTS_DIR / "transformer_errors_val_top50.csv", index=False)
+    if not test_errors_df.empty:
+        test_errors_df.sort_values(by="pred_proba", ascending=False, inplace=True, ignore_index=True)
+        test_errors_df.head(50).to_csv(REPORTS_DIR / "transformer_errors_test_top50.csv", index=False)
 
     # Confusion matrices
-    def plot_cm(y_true, y_pred, split_name):
+    def plot_cm(y_true: np.ndarray, y_pred: np.ndarray, split_name: str) -> None:
         labels = list(le.classes_)
         cm = confusion_matrix(y_true, y_pred)
         plt.figure(figsize=(5, 4))
@@ -242,12 +279,8 @@ def main():
 
     # ROC curves (binary only)
     if len(le.classes_) == 2 and val_probs is not None and test_probs is not None:
-        pos_label_name = le.inverse_transform([1])[0] if len(le.classes_) > 1 else None
-        # get numeric arrays for ROC (use label index 1 as positive)
-        def plot_roc(y_true, probs, split_name):
-            # probs shape (n, n_classes)
-            # compute roc for pos class index 1
-            pos = 1
+        pos = 1  # use label index 1 as the positive class
+        def plot_roc(y_true: np.ndarray, probs: np.ndarray, split_name: str) -> float:
             fpr, tpr, _ = roc_curve(y_true, probs[:, pos], pos_label=pos)
             roc_auc = auc(fpr, tpr)
             plt.figure()
@@ -255,7 +288,7 @@ def main():
             plt.plot([0, 1], [0, 1], "k--")
             plt.xlabel("False Positive Rate")
             plt.ylabel("True Positive Rate")
-            plt.title(f"ROC - Transformer Emb - {split_name} (pos={pos_label_name})")
+            plt.title(f"ROC - Transformer Emb - {split_name}")
             plt.legend(loc="lower right")
             plt.savefig(REPORTS_DIR / f"roc_transformer_{split_name}.png")
             plt.close()
@@ -265,52 +298,38 @@ def main():
         roc_test = plot_roc(y_test, test_probs, "test")
         results["val"]["roc_auc"] = float(roc_val)
         results["test"]["roc_auc"] = float(roc_test)
+        # Save updated results with ROC values
+        with open(results_path, "w") as f:
+            json.dump(results, f, indent=4)
 
-    # Save final results with ROC if present
-    save_metrics_json(save_path, results)
-
-    # Generate summary markdown
-    md = []
-    md.append("# Transformer Embeddings - Summary (v2)\n")
-    md.append("## Model & Setup\n")
-    md.append(f"- Encoder: {MODEL_NAME}\n")
-    md.append(f"- LogisticRegression grid C: {C_GRID}\n")
-    md.append(f"- Selected best_C: {best_C}\n")
-    md.append(f"- Device used: {device}\n")
-    md.append("\n## Label mapping\n")
+    # Summary markdown
+    md_lines: list[str] = []
+    md_lines.append("# Transformer Embeddings - Summary (v2)\n")
+    md_lines.append("## Model & Setup\n")
+    md_lines.append(f"- Encoder: {MODEL_NAME}\n")
+    md_lines.append(f"- LogisticRegression grid C: {C_GRID}\n")
+    md_lines.append(f"- Selected best_C: {best_C}\n")
+    md_lines.append(f"- Device used: {device}\n")
+    md_lines.append("\n## Label mapping\n")
     for idx, name in enumerate(le.classes_):
-        md.append(f"- {idx} => {name}\n")
-    md.append("\n## Validation metrics\n")
+        md_lines.append(f"- {idx} => {name}\n")
+    md_lines.append("\n## Validation metrics\n")
     for k, v in val_metrics.items():
-        md.append(f"- {k}: {v:.4f}\n")
-    md.append("\n## Test metrics\n")
+        md_lines.append(f"- {k}: {v:.4f}\n")
+    md_lines.append("\n## Test metrics\n")
     for k, v in test_metrics.items():
-        md.append(f"- {k}: {v:.4f}\n")
+        md_lines.append(f"- {k}: {v:.4f}\n")
     if "roc_auc" in results["val"]:
-        md.append(f"\n- val ROC AUC: {results['val']['roc_auc']:.4f}\n")
-        md.append(f"\n- test ROC AUC: {results['test']['roc_auc']:.4f}\n")
+        md_lines.append(f"\n- val ROC AUC: {results['val']['roc_auc']:.4f}\n")
+        md_lines.append(f"- test ROC AUC: {results['test']['roc_auc']:.4f}\n")
+    md_path = REPORTS_DIR / "transformer_summary.md"
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write("".join(md_lines))
 
-    # include top-10 misclassifications
-    md.append("\n## Top misclassified examples (val)\n")
-    for i, row in val_errors_df.head(10).iterrows():
-        true_label = le.inverse_transform([int(row["true_label"])])[0]
-        pred_label = le.inverse_transform([int(row["predicted_label"])])[0]
-        md.append(f"\n**Example {i+1}** (true: {true_label}, pred: {pred_label})\n\n")
-        text_snip = row["text"]
-        if len(text_snip) > 500:
-            text_snip = text_snip[:500] + "..."
-        md.append(f"{text_snip}\n")
+    print("✅ Transformer embedding training (v2) complete.")
+    print("Metrics saved to:", results_path)
+    print("Summary markdown:", md_path)
 
-    summary_path = REPORTS_DIR / "transformer_summary_v2.md"
-    with open(summary_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(md))
-
-    print("✅ Done. Artifacts saved:")
-    print(f"- Model: {MODELS_DIR / 'logreg_transformer_emb_best.joblib'}")
-    print(f"- Label encoder: {MODELS_DIR / 'label_encoder_transformer.joblib'}")
-    print(f"- Embeddings: {EMB_DIR}")
-    print(f"- Reports: {REPORTS_DIR}")
-    print(f"- Summary: {summary_path}")
 
 if __name__ == "__main__":
     main()
