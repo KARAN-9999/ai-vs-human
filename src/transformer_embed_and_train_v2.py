@@ -102,18 +102,28 @@ def get_embeddings(
 
 
 def ensure_embeddings_exist(
-    split: str, tokenizer: AutoTokenizer, model: AutoModel, device: torch.device, texts: list[str]
+    split: str, tokenizer: AutoTokenizer, model: AutoModel,
+    device: torch.device, texts: list[str]
 ) -> np.ndarray:
-    """Load embeddings from disk if they exist; otherwise extract and save them."""
+    """Load embeddings from disk if they exist and match dataset size,
+    otherwise extract and save them."""
     emb_path = EMB_DIR / f"transformer_{split}_embeddings.npy"
+    # If file exists, try to load and verify shape
     if emb_path.exists():
-        print(f"[skip] embeddings exist: {emb_path}")
-        return np.load(emb_path)
+        arr = np.load(emb_path)
+        if arr.shape[0] == len(texts):
+            print(f"[skip] embeddings exist: {emb_path}")
+            return arr
+        else:
+            print(f"[recompute] {emb_path} shape {arr.shape} doesn’t match "
+                  f"{len(texts)} samples; re-extracting...")
+    # Compute and save new embeddings
     print(f"[create] extracting embeddings for {split} (this may take a while)...")
     arr = get_embeddings(texts, tokenizer, model, device)
     np.save(emb_path, arr)
     print(f"Saved embeddings: {emb_path} (shape={arr.shape})")
     return arr
+
 
 
 def load_splits() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
