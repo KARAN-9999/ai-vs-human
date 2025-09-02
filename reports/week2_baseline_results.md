@@ -1,18 +1,18 @@
 # Baseline Model Results
 
-**Validation Accuracy**: 0.9766
+**Validation Accuracy**: 1.0000
 
 ## Classification Report
               precision    recall  f1-score   support
 
-          AI       0.97      0.98      0.98       750
-       Human       0.98      0.97      0.98       747
+          AI       1.00      1.00      1.00       461
+       Human       1.00      1.00      1.00       460
 
-    accuracy                           0.98      1497
-   macro avg       0.98      0.98      0.98      1497
-weighted avg       0.98      0.98      0.98      1497
+    accuracy                           1.00       921
+   macro avg       1.00      1.00      1.00       921
+weighted avg       1.00      1.00      1.00       921
 
 
 ## Confusion Matrix
-[[734  16]
- [ 19 728]]
+[[461   0]
+ [  0 460]]
