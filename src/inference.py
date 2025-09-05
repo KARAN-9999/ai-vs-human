@@ -50,7 +50,7 @@ _LABEL = None
 _TOKENIZER = None
 _TRANS_MODEL = None
 _DEVICE = None
-_TRANS_PATH = None
+_TRANS_PATH: Optional[Path] = None
 
 # -------------------------------
 # Helpers
@@ -133,12 +133,13 @@ def _predict_lr(text: str) -> Tuple[str, Dict[str, float], Dict]:
             "backend": "lr",
             "variant": "pipeline",
             "model_path": str(PIPELINE_PATH),
+            "model_name": "tfidf_lr_v1",
             "runtime_seconds": round(time.time() - t0, 4),
             "timestamp": datetime.utcnow().isoformat() + "Z",
         }
         return label, probs, meta
 
-    # legacy
+    # legacy artifacts
     X = _VEC.transform([text])
     if hasattr(_CLF, "predict_proba"):
         proba = _CLF.predict_proba(X)[0]
@@ -159,6 +160,7 @@ def _predict_lr(text: str) -> Tuple[str, Dict[str, float], Dict]:
         "backend": "lr",
         "variant": "legacy",
         "artifact_dir": str(LR_DIR),
+        "model_name": "tfidf_lr_v1",
         "runtime_seconds": round(time.time() - t0, 4),
         "timestamp": datetime.utcnow().isoformat() + "Z",
     }
@@ -184,9 +186,11 @@ def _predict_transformer(text: str) -> Tuple[str, Dict[str, float], Dict]:
     probs = {lbl: float(probs_t[i]) for i, lbl in enumerate(labels)}
     label = "AI" if probs["AI"] >= probs["Human"] else "Human"
 
+    model_name = (_TRANS_PATH.name if _TRANS_PATH is not None else "transformer")
     meta = {
         "backend": "transformer",
-        "model_dir": str(_TRANS_PATH),
+        "model_dir": str(_TRANS_PATH) if _TRANS_PATH is not None else "",
+        "model_name": model_name,
         "device": str(_DEVICE),
         "max_len": MAX_LEN,
         "runtime_seconds": round(time.time() - t0, 4),

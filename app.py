@@ -1,10 +1,10 @@
 """
-FastAPI backend for the AI vs Human classifier (TF-IDF only).
+FastAPI backend for the AI vs Human classifier (TF-IDF or Transformer).
 
 Endpoints:
 - GET  /            -> serves frontend/index.html
 - GET  /health
-- POST /predict     -> { prediction, confidence, probabilities, model, runtime_seconds, timestamp }
+- POST /predict     -> { prediction, confidence, probabilities, model, backend, runtime_seconds, timestamp }
 - GET  /history     -> { count, history: [...] }
 - GET  /analytics   -> { totals_by_label, avg_confidence_by_label, confidence_histogram_bins, last_50 }
 - GET  /version     -> { clf_loaded, hf_model_name }
@@ -20,7 +20,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -29,12 +29,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-import src.inference as inf  # TF-IDF-only predict_text
+import src.inference as inf
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_DIR   = BASE_DIR / "data"
 DB_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH  = str(DB_DIR / "app.db")   # <<< absolute path now
+DB_PATH  = str(DB_DIR / "app.db")
 
 def _conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -148,6 +148,7 @@ def _startup() -> None:
 
 class PredictIn(BaseModel):
     text: str
+    backend: Optional[str] = None   # "lr", "transformer", or None/"auto"
 
 @app.middleware("http")
 async def add_nocache_headers(request: Request, call_next):
@@ -171,7 +172,8 @@ def predict(inp: PredictIn) -> Dict:
     if not txt:
         raise HTTPException(status_code=400, detail="Empty text")
 
-    label, probs, meta = inf.predict_text(txt)
+    backend = (inp.backend or "").strip().lower() or None
+    label, probs, meta = inf.predict_text(txt, backend=backend)
     confidence = float(max(probs.values()))
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -191,6 +193,7 @@ def predict(inp: PredictIn) -> Dict:
         "confidence": confidence,
         "probabilities": probs,
         "model": {"hf_model_name": meta.get("model_name", "tfidf_lr_v1")},
+        "backend": meta.get("backend", backend or "auto"),
         "runtime_seconds": meta.get("runtime_seconds", 0.0),
         "timestamp": now_iso,
     }
@@ -202,32 +205,62 @@ def history(limit: int = Query(20, ge=1, le=200)) -> Dict:
 
 @app.get("/analytics")
 def analytics() -> Dict:
-    """Return analytics for the last 50 predictions."""
-    totals, avg_conf = label_stats()
-    confs = confidence_list()
-    bins = [0] * 10
-    for c in confs:
-        idx = min(9, int(math.floor(float(c) * 10)))
-        bins[idx] += 1
-    series = [
-        {"ts": ts, "prediction": pred, "confidence": float(conf)}
-        for ts, pred, conf in last_50()
-    ]
-    return {
-        "totals_by_label": totals,
-        "avg_confidence_by_label": avg_conf,
-        "confidence_histogram_bins": bins,
-        "last_50": series,
-    }
+    """Return analytics for the last 50 predictions. Always safe defaults."""
+    try:
+        totals, avg_conf = label_stats()
+        confs = confidence_list()
+        # 10 bins [0.0–0.1, ..., 0.9–1.0]
+        bins = [0] * 10
+        for c in confs:
+            try:
+                idx = min(9, int(float(c) * 10))
+            except Exception:
+                idx = 0
+            bins[idx] += 1
+
+        series = [
+            {"ts": ts, "prediction": pred, "confidence": float(conf)}
+            for ts, pred, conf in last_50()
+        ]
+        # Ensure keys exist with safe defaults
+        out = {
+            "totals_by_label": {"AI": int(totals.get("AI", 0)), "Human": int(totals.get("Human", 0))},
+            "avg_confidence_by_label": {
+                "AI": float(avg_conf.get("AI", 0.0)),
+                "Human": float(avg_conf.get("Human", 0.0)),
+            },
+            "confidence_histogram_bins": bins,
+            "last_50": series,
+        }
+        return out
+    except Exception:
+        # Absolute fallback if DB not ready or anything else fails
+        return {
+            "totals_by_label": {"AI": 0, "Human": 0},
+            "avg_confidence_by_label": {"AI": 0.0, "Human": 0.0},
+            "confidence_histogram_bins": [0] * 10,
+            "last_50": [],
+        }
+
 
 @app.get("/version")
 def version() -> Dict:
-    """Model availability info (no HF)."""
+    """Model availability info."""
+    # LR presence
     model_dir = Path("models/lr_v1")
     have_vec = (model_dir / "tfidf.joblib").exists()
     have_clf = (model_dir / "model.joblib").exists()
     have_lab = (model_dir / "labels.joblib").exists()
     clf_loaded = bool(have_vec and have_clf and have_lab)
-    return {"clf_loaded": clf_loaded, "hf_model_name": "-"}
+
+    # Transformer presence (best effort)
+    hf_dir = os.getenv("TRANSFORMER_MODEL_DIR", "").strip()
+    if hf_dir and Path(hf_dir).is_dir():
+        hf_name = Path(hf_dir).name
+    else:
+        auto = next(iter([p for p in Path("models").glob("finetuned_*") if p.is_dir()]), None)
+        hf_name = auto.name if auto else "-"
+
+    return {"clf_loaded": clf_loaded, "hf_model_name": hf_name}
 
 # Run: uvicorn app:app --reload --port 8000

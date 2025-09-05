@@ -15,6 +15,7 @@ const historyList = $("historyList");
 const footerVersion = $("footerVersion");
 const darkToggle = $("darkToggle");
 const historyPanel = $("historyPanel");
+const modelSelect = $("modelSelect");
 
 // KPI
 const kpiTotal = $("kpiTotal");
@@ -50,6 +51,10 @@ async function classify() {
   const text = (input.value || "").trim();
   if (!text) return showToast("Please paste some text.");
 
+  // Read model selection
+  const choice = (modelSelect?.value || "auto");
+  const backend = (choice === "auto") ? null : choice;
+
   btn.disabled = true; btn.textContent = "Classifying...";
   spinner.classList.remove("hidden");
   result.textContent = ""; badge.classList.add("hidden");
@@ -58,12 +63,12 @@ async function classify() {
     const res = await fetch(`${apiBase}/predict`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ text })
+      body: JSON.stringify({ text, backend })
     });
     const payload = await res.json().catch(() => ({}));
     if (!res.ok) return showToast(`Error ${res.status}: ${payload.detail || "Prediction failed"}`);
 
-    const { prediction, confidence, probabilities, model, runtime_seconds, timestamp } = payload;
+    const { prediction, confidence, probabilities, model, backend: usedBackend, runtime_seconds, timestamp } = payload;
     const label = (confidence >= 0.55) ? prediction : "Unsure";
     setBadge(label, confidence);
     result.textContent =
@@ -71,6 +76,7 @@ async function classify() {
 Confidence  : ${(confidence*100).toFixed(1)}%
 Probabilities: ${JSON.stringify(probabilities)}
 Model       : ${model?.hf_model_name || "-"}
+Backend     : ${usedBackend || choice}
 Runtime     : ${runtime_seconds}s
 When        : ${timestamp}`;
 
@@ -124,17 +130,36 @@ function initDarkMode() {
   });
 }
 
-function buildOrUpdateCharts(analytics) {
-  const ctxL = document.getElementById("lineChart").getContext("2d");
-  const ctxB = document.getElementById("barChart").getContext("2d");
-  const ctxH = document.getElementById("histChart").getContext("2d");
+function buildOrUpdateCharts(analytics = {}) {
+  // Ensure fields exist
+  const totals = analytics.totals_by_label || { AI: 0, Human: 0 };
+  const avg = analytics.avg_confidence_by_label || { AI: 0, Human: 0 };
+  const hist = Array.isArray(analytics.confidence_histogram_bins)
+    ? analytics.confidence_histogram_bins
+    : [0,0,0,0,0,0,0,0,0,0];
+  const last = Array.isArray(analytics.last_50) ? analytics.last_50 : [];
 
-  // friendlier HH:MM:SS labels
-  const labels = (analytics.last_50 || []).map(x =>
-    (x.ts.includes("T") ? x.ts.split("T")[1].replace("Z","") : x.ts).slice(0,8)
+  const lineEl = document.getElementById("lineChart");
+  const barEl  = document.getElementById("barChart");
+  const histEl = document.getElementById("histChart");
+  if (!lineEl || !barEl || !histEl || typeof Chart === "undefined") {
+    // Can’t render charts; just update KPIs and leave.
+    const total = (totals.AI || 0) + (totals.Human || 0);
+    kpiTotal.textContent = total;
+    kpiAI.textContent = total ? `${Math.round((totals.AI || 0)/total*100)}%` : "0%";
+    kpiHuman.textContent = total ? `${Math.round((totals.Human || 0)/total*100)}%` : "0%";
+    return;
+  }
+
+  const ctxL = lineEl.getContext("2d");
+  const ctxB = barEl.getContext("2d");
+  const ctxH = histEl.getContext("2d");
+
+  const labels = last.map(x =>
+    (x.ts && x.ts.includes("T") ? x.ts.split("T")[1].replace("Z","") : (x.ts || "")).slice(0,8)
   );
-  const aiSeries    = (analytics.last_50 || []).map(x => x.prediction === "AI" ? x.confidence : 0);
-  const humanSeries = (analytics.last_50 || []).map(x => x.prediction === "Human" ? x.confidence : 0);
+  const aiSeries    = last.map(x => x.prediction === "AI" ? x.confidence : 0);
+  const humanSeries = last.map(x => x.prediction === "Human" ? x.confidence : 0);
 
   if (lineChart) lineChart.destroy();
   lineChart = new Chart(ctxL, {
@@ -150,8 +175,8 @@ function buildOrUpdateCharts(analytics) {
   barChart = new Chart(ctxB, {
     type: "bar",
     data: {
-      labels: Object.keys(analytics.avg_confidence_by_label || {}),
-      datasets: [{ label: "Avg confidence", data: Object.values(analytics.avg_confidence_by_label || {}), backgroundColor: ["#0ea5e9", "#10b981"] }]
+      labels: ["AI", "Human"],
+      datasets: [{ label: "Avg confidence", data: [avg.AI || 0, avg.Human || 0], backgroundColor: ["#0ea5e9", "#10b981"] }]
     },
     options: { responsive: true, maintainAspectRatio: false, animation: false, scales: { y: { beginAtZero: true, max: 1 } } }
   });
@@ -161,25 +186,28 @@ function buildOrUpdateCharts(analytics) {
     type: "bar",
     data: {
       labels: ["0–0.1","0.1–0.2","0.2–0.3","0.3–0.4","0.4–0.5","0.5–0.6","0.6–0.7","0.7–0.8","0.8–0.9","0.9–1.0"],
-      datasets: [{ label: "Confidence histogram", data: analytics.confidence_histogram_bins || [], backgroundColor: "#6366f1" }]
+      datasets: [{ label: "Confidence histogram", data: hist, backgroundColor: "#6366f1" }]
     },
     options: { responsive: true, maintainAspectRatio: false, animation: false, scales: { y: { beginAtZero: true } } }
   });
-
-  const totals = analytics.totals_by_label || {};
+  
   const total = (totals.AI || 0) + (totals.Human || 0);
   kpiTotal.textContent = total;
   kpiAI.textContent = total ? `${Math.round((totals.AI || 0)/total*100)}%` : "0%";
   kpiHuman.textContent = total ? `${Math.round((totals.Human || 0)/total*100)}%` : "0%";
 }
 
+
 async function refreshAnalytics() {
   try {
     const res = await fetch(`${apiBase}/analytics`, { cache: "no-store" });
+    if (!res.ok) throw new Error("analytics http " + res.status);
     const data = await res.json().catch(() => ({}));
-    buildOrUpdateCharts(data);
+    buildOrUpdateCharts(data || {});
   } catch (e) {
-    console.error(e);
+    // Show zeroed KPIs but don’t break UI
+    buildOrUpdateCharts({});
+    console.warn("analytics error:", e);
   }
 }
 
