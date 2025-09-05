@@ -1,0 +1,43 @@
+{
+  "accuracy": 1.0,
+  "report": {
+    "AI": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 461.0
+    },
+    "Human": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 503.0
+    },
+    "accuracy": 1.0,
+    "macro avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 964.0
+    },
+    "weighted avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 964.0
+    }
+  },
+  "confusion_matrix": [
+    [
+      461,
+      0
+    ],
+    [
+      0,
+      503
+    ]
+  ],
+  "n_train": 4494,
+  "n_val": 963,
+  "n_test": 964
+}

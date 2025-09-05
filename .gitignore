@@ -19,3 +19,4 @@ __pycache__/
 # Ignore large model files
 *.pt
 *.pth
+models/finetuned_distilroberta-base/
