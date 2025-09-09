@@ -1,6 +1,6 @@
 // Drives UI, dark mode, prediction, history, and analytics charts.
 
-const apiBase = ""; // same origin
+const apiBase = ""; // same origin; set to your API URL if hosting frontend separately
 
 // DOM helpers
 const $ = (id) => document.getElementById(id);
@@ -50,8 +50,9 @@ function setBadge(label, confidence) {
 async function classify() {
   const text = (input.value || "").trim();
   if (!text) return showToast("Please paste some text.");
+  if (text.length < 20) showToast("Very short inputs may be unreliable.");
 
-  // Read model selection
+  // Model selection
   const choice = (modelSelect?.value || "auto");
   const backend = (choice === "auto") ? null : choice;
 
@@ -69,8 +70,9 @@ async function classify() {
     if (!res.ok) return showToast(`Error ${res.status}: ${payload.detail || "Prediction failed"}`);
 
     const { prediction, confidence, probabilities, model, backend: usedBackend, runtime_seconds, timestamp } = payload;
-    const label = (confidence >= 0.55) ? prediction : "Unsure";
-    setBadge(label, confidence);
+
+    // Trust server label (AI/Human/Unsure)
+    setBadge(prediction, confidence);
     result.textContent =
 `Prediction  : ${prediction}
 Confidence  : ${(confidence*100).toFixed(1)}%
@@ -80,11 +82,8 @@ Backend     : ${usedBackend || choice}
 Runtime     : ${runtime_seconds}s
 When        : ${timestamp}`;
 
-    // Always refresh analytics; history only if visible
     await refreshAnalytics();
-    if (historyPanel.style.display !== "none") {
-      await refreshHistory();
-    }
+    if (historyPanel.style.display !== "none") await refreshHistory();
   } catch (e) {
     showToast(`Network/JS error: ${String(e)}`);
   } finally {
@@ -132,8 +131,8 @@ function initDarkMode() {
 
 function buildOrUpdateCharts(analytics = {}) {
   // Ensure fields exist
-  const totals = analytics.totals_by_label || { AI: 0, Human: 0 };
-  const avg = analytics.avg_confidence_by_label || { AI: 0, Human: 0 };
+  const totals = analytics.totals_by_label || { AI: 0, Human: 0, Unsure: 0 };
+  const avg = analytics.avg_confidence_by_label || { AI: 0, Human: 0, Unsure: 0 };
   const hist = Array.isArray(analytics.confidence_histogram_bins)
     ? analytics.confidence_histogram_bins
     : [0,0,0,0,0,0,0,0,0,0];
@@ -143,8 +142,7 @@ function buildOrUpdateCharts(analytics = {}) {
   const barEl  = document.getElementById("barChart");
   const histEl = document.getElementById("histChart");
   if (!lineEl || !barEl || !histEl || typeof Chart === "undefined") {
-    // Can’t render charts; just update KPIs and leave.
-    const total = (totals.AI || 0) + (totals.Human || 0);
+    const total = (totals.AI || 0) + (totals.Human || 0) + (totals.Unsure || 0);
     kpiTotal.textContent = total;
     kpiAI.textContent = total ? `${Math.round((totals.AI || 0)/total*100)}%` : "0%";
     kpiHuman.textContent = total ? `${Math.round((totals.Human || 0)/total*100)}%` : "0%";
@@ -160,13 +158,15 @@ function buildOrUpdateCharts(analytics = {}) {
   );
   const aiSeries    = last.map(x => x.prediction === "AI" ? x.confidence : 0);
   const humanSeries = last.map(x => x.prediction === "Human" ? x.confidence : 0);
+  const unsureSeries= last.map(x => x.prediction === "Unsure" ? x.confidence : 0);
 
   if (lineChart) lineChart.destroy();
   lineChart = new Chart(ctxL, {
     type: "line",
     data: { labels, datasets: [
       { label: "AI (last 50)", data: aiSeries, borderColor: "#0ea5e9", backgroundColor: "rgba(14,165,233,0.3)", tension: 0.25 },
-      { label: "Human (last 50)", data: humanSeries, borderColor: "#10b981", backgroundColor: "rgba(16,185,129,0.3)", tension: 0.25 }
+      { label: "Human (last 50)", data: humanSeries, borderColor: "#10b981", backgroundColor: "rgba(16,185,129,0.3)", tension: 0.25 },
+      { label: "Unsure (last 50)", data: unsureSeries, borderColor: "#f59e0b", backgroundColor: "rgba(245,158,11,0.3)", tension: 0.25 }
     ]},
     options: { responsive: true, maintainAspectRatio: false, animation: false }
   });
@@ -175,8 +175,8 @@ function buildOrUpdateCharts(analytics = {}) {
   barChart = new Chart(ctxB, {
     type: "bar",
     data: {
-      labels: ["AI", "Human"],
-      datasets: [{ label: "Avg confidence", data: [avg.AI || 0, avg.Human || 0], backgroundColor: ["#0ea5e9", "#10b981"] }]
+      labels: ["AI", "Human", "Unsure"],
+      datasets: [{ label: "Avg confidence", data: [avg.AI || 0, avg.Human || 0, avg.Unsure || 0], backgroundColor: ["#0ea5e9", "#10b981", "#f59e0b"] }]
     },
     options: { responsive: true, maintainAspectRatio: false, animation: false, scales: { y: { beginAtZero: true, max: 1 } } }
   });
@@ -190,13 +190,12 @@ function buildOrUpdateCharts(analytics = {}) {
     },
     options: { responsive: true, maintainAspectRatio: false, animation: false, scales: { y: { beginAtZero: true } } }
   });
-  
-  const total = (totals.AI || 0) + (totals.Human || 0);
+
+  const total = (totals.AI || 0) + (totals.Human || 0) + (totals.Unsure || 0);
   kpiTotal.textContent = total;
   kpiAI.textContent = total ? `${Math.round((totals.AI || 0)/total*100)}%` : "0%";
   kpiHuman.textContent = total ? `${Math.round((totals.Human || 0)/total*100)}%` : "0%";
 }
-
 
 async function refreshAnalytics() {
   try {
@@ -205,7 +204,6 @@ async function refreshAnalytics() {
     const data = await res.json().catch(() => ({}));
     buildOrUpdateCharts(data || {});
   } catch (e) {
-    // Show zeroed KPIs but don’t break UI
     buildOrUpdateCharts({});
     console.warn("analytics error:", e);
   }
@@ -222,7 +220,7 @@ async function showVersion() {
 }
 
 btn.addEventListener("click", classify);
-historyBtn.addEventListener("click", toggleHistory);
+historyBtn.addEventListener("click", () => toggleHistory());
 
 window.addEventListener("load", async () => {
   try { await fetch(`${apiBase}/health`); } catch {}

@@ -15,14 +15,12 @@ Stores predictions in SQLite at data/app.db. Serves static frontend at /static.
 from __future__ import annotations
 
 import os
-import math
 import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
-import pandas as pd
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -31,11 +29,20 @@ from pydantic import BaseModel
 
 import src.inference as inf
 
+# -----------------------------
+# Config & paths
+# -----------------------------
 BASE_DIR = Path(__file__).resolve().parent
 DB_DIR   = BASE_DIR / "data"
 DB_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH  = str(DB_DIR / "app.db")
 
+# Confidence below this becomes "Unsure"
+UNSURE_THRESHOLD = float(os.getenv("UNSURE_THRESHOLD", "0.60"))
+
+# -----------------------------
+# SQLite helpers
+# -----------------------------
 def _conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
@@ -129,11 +136,13 @@ def last_50() -> List[Tuple[str, str, float]]:
             """
         ).fetchall()
 
-# --- FastAPI app ---
+# -----------------------------
+# FastAPI app
+# -----------------------------
 app = FastAPI(title="AI vs Human — API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # tighten to your frontend domain in production if needed
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -173,13 +182,23 @@ def predict(inp: PredictIn) -> Dict:
         raise HTTPException(status_code=400, detail="Empty text")
 
     backend = (inp.backend or "").strip().lower() or None
+    # src.inference.predict_text MUST return: (label, probs_dict, meta_dict)
     label, probs, meta = inf.predict_text(txt, backend=backend)
+
+    # Normalize keys to "AI" and "Human"
+    if "AI" not in probs or "Human" not in probs:
+        # Best-effort remap if model returned lowercase or other variants
+        norm = {k.strip().title(): float(v) for k, v in probs.items()}
+        probs = {"AI": float(norm.get("Ai", norm.get("AI", 0.0))),
+                 "Human": float(norm.get("Human", norm.get("Human", 0.0)))}
+
     confidence = float(max(probs.values()))
+    display_label = label if confidence >= UNSURE_THRESHOLD else "Unsure"
     now_iso = datetime.now(timezone.utc).isoformat()
 
     row = {
         "text": txt,
-        "prediction": label,
+        "prediction": display_label,   # store display label (AI/Human/Unsure)
         "confidence": confidence,
         "probabilities": probs,
         "model_name": meta.get("model_name", "tfidf_lr_v1"),
@@ -189,7 +208,7 @@ def predict(inp: PredictIn) -> Dict:
     insert_prediction(row)
 
     return {
-        "prediction": label,
+        "prediction": display_label,
         "confidence": confidence,
         "probabilities": probs,
         "model": {"hf_model_name": meta.get("model_name", "tfidf_lr_v1")},
@@ -205,7 +224,7 @@ def history(limit: int = Query(20, ge=1, le=200)) -> Dict:
 
 @app.get("/analytics")
 def analytics() -> Dict:
-    """Return analytics for the last 50 predictions. Always safe defaults."""
+    """Return analytics for recent predictions. Always safe defaults."""
     try:
         totals, avg_conf = label_stats()
         confs = confidence_list()
@@ -222,38 +241,38 @@ def analytics() -> Dict:
             {"ts": ts, "prediction": pred, "confidence": float(conf)}
             for ts, pred, conf in last_50()
         ]
-        # Ensure keys exist with safe defaults
-        out = {
-            "totals_by_label": {"AI": int(totals.get("AI", 0)), "Human": int(totals.get("Human", 0))},
+
+        return {
+            "totals_by_label": {
+                "AI": int(totals.get("AI", 0)),
+                "Human": int(totals.get("Human", 0)),
+                "Unsure": int(totals.get("Unsure", 0)),
+            },
             "avg_confidence_by_label": {
                 "AI": float(avg_conf.get("AI", 0.0)),
                 "Human": float(avg_conf.get("Human", 0.0)),
+                "Unsure": float(avg_conf.get("Unsure", 0.0)),
             },
             "confidence_histogram_bins": bins,
             "last_50": series,
         }
-        return out
     except Exception:
-        # Absolute fallback if DB not ready or anything else fails
         return {
-            "totals_by_label": {"AI": 0, "Human": 0},
-            "avg_confidence_by_label": {"AI": 0.0, "Human": 0.0},
+            "totals_by_label": {"AI": 0, "Human": 0, "Unsure": 0},
+            "avg_confidence_by_label": {"AI": 0.0, "Human": 0.0, "Unsure": 0.0},
             "confidence_histogram_bins": [0] * 10,
             "last_50": [],
         }
 
-
 @app.get("/version")
 def version() -> Dict:
     """Model availability info."""
-    # LR presence
     model_dir = Path("models/lr_v1")
     have_vec = (model_dir / "tfidf.joblib").exists()
     have_clf = (model_dir / "model.joblib").exists()
     have_lab = (model_dir / "labels.joblib").exists()
     clf_loaded = bool(have_vec and have_clf and have_lab)
 
-    # Transformer presence (best effort)
     hf_dir = os.getenv("TRANSFORMER_MODEL_DIR", "").strip()
     if hf_dir and Path(hf_dir).is_dir():
         hf_name = Path(hf_dir).name
@@ -263,4 +282,5 @@ def version() -> Dict:
 
     return {"clf_loaded": clf_loaded, "hf_model_name": hf_name}
 
-# Run: uvicorn app:app --reload --port 8000
+# Run locally:
+# uvicorn app:app --reload --port 8000

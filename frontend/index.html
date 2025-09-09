@@ -9,7 +9,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config = { darkMode: 'class' };</script>
 
-  <!-- IMPORTANT: Chart.js UMD build (global `Chart`) -->
+  <!-- Chart.js (UMD) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 
@@ -33,7 +33,7 @@
   <section class="bg-gradient-to-b from-sky-50 dark:from-slate-800 to-transparent py-8">
     <div class="max-w-6xl mx-auto px-4">
       <h1 class="text-3xl md:text-4xl font-bold">Detect AI-generated vs Human-written text</h1>
-      <p class="mt-2 text-slate-600 dark:text-slate-300 max-w-2xl">Paste text, get a prediction with confidence. Every result is saved to history.</p>
+      <p class="mt-2 text-slate-600 dark:text-slate-300 max-w-2xl">Paste text, get a prediction with confidence. Every result is saved to history and powers live analytics.</p>
     </div>
   </section>
 
@@ -69,7 +69,7 @@
             <h2 class="text-lg font-semibold mb-3">Result</h2>
             <div id="resultBadge" class="hidden inline-flex items-center gap-2 px-3 py-1 rounded-xl text-sm font-semibold border"></div>
             <pre id="resultBox" class="mt-3 bg-slate-50 dark:bg-slate-700 rounded-xl p-3 text-sm whitespace-pre-wrap min-h-[90px]"></pre>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-2">Confidence is probabilistic. Treat 45–55% as “uncertain.”</p>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-2">Confidence is probabilistic. Inputs under ~20 chars may be unreliable.</p>
           </div>
         </div>
       </div>
