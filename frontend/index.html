@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>AI vs Human — Classifier</title>
 
-  <!-- Tailwind -->
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config = { darkMode: 'class' };</script>
 
@@ -54,7 +54,8 @@
               <label for="modelSelect" class="ml-2 text-sm text-slate-600 dark:text-slate-300">Model:</label>
               <select id="modelSelect" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-sm">
                 <option value="auto" selected>Auto (default)</option>
-                <option value="lr">TF-IDF (lr_v1)</option>
+                <option value="lr">Robust TF-IDF (lr)</option>
+                <option value="old_lr">Original TF-IDF (old_lr)</option>
                 <option value="transformer">Transformer (finetuned)</option>
               </select>
 
@@ -94,7 +95,7 @@
         <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-5">
           <h3 class="font-semibold mb-2">Analytics</h3>
           <canvas id="lineChart" height="170"></canvas>
-          <canvas id="barChart"  height="170" class="mt-6"></canvas>
+          <canvas id="barChart" height="170" class="mt-6"></canvas>
           <canvas id="histChart" height="170" class="mt-6"></canvas>
         </div>
 
