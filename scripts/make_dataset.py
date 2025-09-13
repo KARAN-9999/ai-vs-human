@@ -7,7 +7,10 @@ DATA.mkdir(exist_ok=True)
 # Edit these paths to whatever you actually have:
 sources = [
     DATA/"AI_Human.csv",         # Kaggle (existing)
-    DATA/"dataset.csv",        # your own collected data
+    DATA/"dataset.csv",   
+    DATA /"augmented_human.csv",
+    DATA/"augmented_ai.csv"
+              # your own collected data
     # add more if you have them
 ]
 

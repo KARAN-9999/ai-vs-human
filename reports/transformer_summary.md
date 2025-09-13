@@ -2,7 +2,7 @@
 ## Model & Setup
 - Encoder: distilroberta-base
 - LogisticRegression grid C: [0.01, 0.1, 1, 10]
-- Selected best_C: 0.1
+- Selected best_C: 10
 - Device used: cpu
 
 ## Label mapping
@@ -10,18 +10,18 @@
 - 1 => Human
 
 ## Validation metrics
-- accuracy: 1.0000
-- precision: 1.0000
-- recall: 1.0000
-- f1: 1.0000
-- roc_auc: 1.0000
+- accuracy: 0.9866
+- precision: 0.9866
+- recall: 0.9866
+- f1: 0.9865
+- roc_auc: 0.9984
 
 ## Test metrics
-- accuracy: 1.0000
-- precision: 1.0000
-- recall: 1.0000
-- f1: 1.0000
-- roc_auc: 1.0000
+- accuracy: 0.9893
+- precision: 0.9893
+- recall: 0.9893
+- f1: 0.9893
+- roc_auc: 0.9995
 
-- val ROC AUC: 1.0000
-- test ROC AUC: 1.0000
+- val ROC AUC: 0.9984
+- test ROC AUC: 0.9995

@@ -20,3 +20,4 @@ __pycache__/
 *.pt
 *.pth
 models/finetuned_distilroberta-base/
+models/finetuned_bert-base-uncased/

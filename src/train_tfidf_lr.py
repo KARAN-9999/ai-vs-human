@@ -42,7 +42,7 @@ def main(data_path, out_dir):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default="data/processed/dataset_clean.csv")
+    ap.add_argument("--data", default="data/raw/dataset_clean.csv")
     ap.add_argument("--output_dir", default="models/lr_v1")
     args = ap.parse_args()
     main(args.data, args.output_dir)
