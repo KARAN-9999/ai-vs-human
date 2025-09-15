@@ -61,10 +61,32 @@
       <div class="p-5">
         <h2 class="text-lg font-semibold mb-3">Result</h2>
         <div id="resultBadge" class="hidden inline-flex items-center gap-2 px-3 py-1 rounded-xl text-sm font-semibold border"></div>
-        <pre id="resultBox" class="mt-3 bg-slate-50 dark:bg-slate-700 rounded-xl p-3 text-sm whitespace-pre-wrap min-h-[90px]"></pre>
+        <pre id="resultBox" class="mt-3 bg-slate-50 dark:bg-slate-700 rounded-xl p-3 text-sm whitespace-pre-wrap min-h-[90px] flex flex-wrap"></pre>
         <p class="text-xs text-slate-500 dark:text-slate-400 mt-2">Confidence is probabilistic. Very short inputs may be unreliable.</p>
       </div>
     </section>
+
+    <!-- Explanation section -->
+    <section class="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700">
+      <div class="p-5">
+        <div class="flex flex-wrap items-center gap-3 mb-3">
+          <label for="toggleExplain" class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+            <input id="toggleExplain" type="checkbox" class="rounded text-sky-600 focus:ring-sky-500">
+            Show explanation
+          </label>
+          <div class="flex flex-wrap items-center gap-3 text-xs">
+            <span class="flex items-center gap-1">
+              <span class="inline-block w-3 h-3 rounded" style="background: rgba(255,0,0,0.3);"></span><span class="text-slate-500 dark:text-slate-400">AI evidence</span>
+            </span>
+            <span class="flex items-center gap-1">
+              <span class="inline-block w-3 h-3 rounded" style="background: rgba(0,128,255,0.3);"></span><span class="text-slate-500 dark:text-slate-400">Human evidence</span>
+            </span>
+          </div>
+        </div>
+        <pre id="explainBox" class="hidden bg-slate-50 dark:bg-slate-700 rounded-xl p-3 text-sm whitespace-pre-wrap"></pre>
+      </div>
+    </section>
+
   </main>
 
   <footer class="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
