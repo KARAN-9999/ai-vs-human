@@ -1,6 +1,6 @@
 // Minimal frontend — now with explainability and responsive improvements
 
-const apiBase = ""; // same origin
+const apiBase = "https://ai-vs-human-48b8.onrender.com"; // same origin
 
 // DOM shorthand
 const $ = (id) => document.getElementById(id);
