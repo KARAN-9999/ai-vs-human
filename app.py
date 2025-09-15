@@ -462,6 +462,7 @@ import src.inference as inf  # for transformer or LR fallback
 
 # Base paths
 BASE_DIR = Path(__file__).resolve().parent
+ROOT_DIR = BASE_DIR.parent 
 MODELS_DIR = BASE_DIR / "models"
 
 UNSURE_THRESHOLD = float(os.getenv("UNSURE_THRESHOLD", "0.60"))
@@ -488,7 +489,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "docs")), name="static")
+app.mount("/static", StaticFiles(directory=str(ROOT_DIR / "docs")), name="static")
 
 
 class PredictIn(BaseModel):
