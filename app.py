@@ -558,7 +558,7 @@ class ExplainOut(BaseModel):
 
 @app.get("/")
 def root() -> FileResponse:
-    return FileResponse(str(BASE_DIR / "frontend" / "index.html"))
+    return FileResponse(str(BASE_DIR / "docs" / "index.html"))
 
 
 @app.get("/health")
