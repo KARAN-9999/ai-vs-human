@@ -488,7 +488,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "frontend")), name="static")
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "docs")), name="static")
 
 
 class PredictIn(BaseModel):
