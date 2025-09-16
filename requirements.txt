@@ -36,3 +36,4 @@ pydantic>=2
 streamlit
 requests
 fastapi
+gdown
