@@ -14,6 +14,7 @@ import numpy as np
 try:
     import torch
     from transformers import AutoTokenizer, AutoModelForSequenceClassification
+    from huggingface_hub import snapshot_download
     _TRANS_AVAILABLE = True
 except Exception:
     _TRANS_AVAILABLE = False
@@ -29,14 +30,14 @@ ROBUST_PIPE_CANDIDATES = [
     MODELS_DIR / "tfidf_logreg.joblib",  # legacy fallback
 ]
 
-# Old LR artifacts (vectorizer + clf + label encoder [+ optional calibration])
+# Old LR artifacts
 LRV1_DIR = MODELS_DIR / "lr_v1"
 LRV1_VEC = LRV1_DIR / "tfidf.joblib"
 LRV1_CLF = LRV1_DIR / "model.joblib"
 LRV1_LAB = LRV1_DIR / "labels.joblib"
-LRV1_CAL = LRV1_DIR / "calibration.joblib"  # optional
+LRV1_CAL = LRV1_DIR / "calibration.joblib"
 
-# Transformer (always from Hugging Face Hub now)
+# Transformer model ID
 HUGGINGFACE_MODEL_ID = "Karan-09/ai-vs-human-transformer"
 MAX_LEN = int(os.getenv("TRANSFORMER_MAX_LEN", "256"))
 
@@ -46,16 +47,12 @@ BACKEND_ENV = os.getenv("MODEL_BACKEND", "auto").strip().lower()
 # -----------------------------------------------------------------------------
 # Globals
 # -----------------------------------------------------------------------------
-# robust pipeline
 _PIPE_ROBUST: Optional[Any] = None
-
-# old lr artifacts
 _V1_VEC: Optional[Any] = None
 _V1_CLF: Optional[Any] = None
 _V1_LAB: Optional[Any] = None
 _V1_CAL: Optional[Any] = None
 
-# transformer
 _TOKENIZER = None
 _TRANS_MODEL = None
 _DEVICE = None
@@ -68,7 +65,6 @@ def _now_iso() -> str:
 
 
 def _classes_to_probs(proba_vec, classes_like) -> Dict[str, float]:
-    """Map model class order to {'AI': p, 'Human': p} robustly."""
     probs = {"AI": 0.0, "Human": 0.0}
     for i, c in enumerate(list(classes_like)):
         name = str(c)
@@ -80,7 +76,6 @@ def _classes_to_probs(proba_vec, classes_like) -> Dict[str, float]:
 
 
 def _decode_label_idx(idx: int, label_obj) -> str:
-    """Decode index -> label using LabelEncoder or list-like."""
     try:
         if hasattr(label_obj, "inverse_transform"):
             return str(label_obj.inverse_transform([idx])[0])
@@ -123,19 +118,30 @@ def _load_old_lr():
                 _V1_CAL = None
 
 
-def _load_transformer():
-    """Load transformer model directly from Hugging Face Hub."""
+def _load_transformer(prewarm: bool = False):
+    """Load transformer from Hugging Face Hub (cached in Render disk)."""
     global _TOKENIZER, _TRANS_MODEL, _DEVICE
     if _TOKENIZER is not None:
         return
     if not _TRANS_AVAILABLE:
         raise RuntimeError("transformers/torch not installed; cannot use transformer backend")
 
+    # ensure cached snapshot (avoids download every deploy)
+    snapshot_download(repo_id=HUGGINGFACE_MODEL_ID, local_dir="models/hf-cache", ignore_patterns=["*.msgpack"])
+
     _DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    _TOKENIZER = AutoTokenizer.from_pretrained(HUGGINGFACE_MODEL_ID)
-    _TRANS_MODEL = AutoModelForSequenceClassification.from_pretrained(HUGGINGFACE_MODEL_ID)
+    _TOKENIZER = AutoTokenizer.from_pretrained(HUGGINGFACE_MODEL_ID, cache_dir="models/hf-cache")
+    _TRANS_MODEL = AutoModelForSequenceClassification.from_pretrained(
+        HUGGINGFACE_MODEL_ID, cache_dir="models/hf-cache"
+    )
     _TRANS_MODEL.to(_DEVICE)
     _TRANS_MODEL.eval()
+
+    # Optional prewarm to avoid first-request slowness
+    if prewarm:
+        dummy = _TOKENIZER("warmup", return_tensors="pt").to(_DEVICE)
+        with torch.no_grad():
+            _ = _TRANS_MODEL(**dummy)
 
 
 # -----------------------------------------------------------------------------
@@ -155,14 +161,7 @@ def _predict_robust_lr(text: str) -> Tuple[str, Dict[str, float], Dict]:
         other = "AI" if pred == "Human" else "Human"
         probs = {pred: 0.9, other: 0.1}
     label = _choose_label(probs)
-    return label, probs, {
-        "backend": "lr",
-        "variant": "robust_pipeline",
-        "model_path": str(next((p for p in ROBUST_PIPE_CANDIDATES if p.exists()), "robust_baseline_model.joblib")),
-        "model_name": "robust_baseline_lr",
-        "runtime_seconds": round(time.time() - t0, 4),
-        "timestamp": _now_iso(),
-    }
+    return label, probs, {"backend": "lr", "runtime_seconds": round(time.time() - t0, 4), "timestamp": _now_iso()}
 
 
 def _predict_old_lr(text: str) -> Tuple[str, Dict[str, float], Dict]:
@@ -174,33 +173,14 @@ def _predict_old_lr(text: str) -> Tuple[str, Dict[str, float], Dict]:
     if hasattr(_V1_CLF, "predict_proba"):
         proba = _V1_CLF.predict_proba(X)[0]
         classes = getattr(_V1_CLF, "classes_", [0, 1])
-        # optional calibration layer
-        if _V1_CAL is not None:
-            try:
-                cal = _V1_CAL.predict_proba(X)
-                if cal.shape[-1] == 2:
-                    proba = cal[0]
-            except Exception:
-                pass
-        try:
-            class_names = [_decode_label_idx(int(c), _V1_LAB) for c in classes]
-        except Exception:
-            class_names = ["Human", "AI"]
-        probs = _classes_to_probs(proba, class_names)
+        probs = _classes_to_probs(proba, classes)
     else:
         enc_pred = int(_V1_CLF.predict(X)[0])
         pred_name = _decode_label_idx(enc_pred, _V1_LAB)
         other = "AI" if pred_name == "Human" else "Human"
         probs = {pred_name: 0.9, other: 0.1}
     label = _choose_label(probs)
-    return label, probs, {
-        "backend": "old_lr",
-        "variant": "lr_v1_artifacts",
-        "artifact_dir": str(LRV1_DIR),
-        "model_name": "tfidf_lr_v1",
-        "runtime_seconds": round(time.time() - t0, 4),
-        "timestamp": _now_iso(),
-    }
+    return label, probs, {"backend": "old_lr", "runtime_seconds": round(time.time() - t0, 4), "timestamp": _now_iso()}
 
 
 def _predict_transformer(text: str) -> Tuple[str, Dict[str, float], Dict]:
@@ -214,56 +194,13 @@ def _predict_transformer(text: str) -> Tuple[str, Dict[str, float], Dict]:
     labels = ["Human", "AI"]  # index 0=Human, 1=AI
     probs = {lbl: float(probs_t[i]) for i, lbl in enumerate(labels)}
     label = _choose_label(probs)
-    return label, probs, {
-        "backend": "transformer",
-        "model_name": HUGGINGFACE_MODEL_ID,
-        "device": str(_DEVICE),
-        "max_len": MAX_LEN,
-        "runtime_seconds": round(time.time() - t0, 4),
-        "timestamp": _now_iso(),
-    }
-
-
-def _predict_ensemble(text: str) -> Tuple[str, Dict[str, float], Dict]:
-    """Average probabilities from any backends that load successfully."""
-    votes: List[Tuple[str, Dict[str, float], Dict]] = []
-    try:
-        votes.append(_predict_robust_lr(text))
-    except Exception:
-        pass
-    try:
-        votes.append(_predict_old_lr(text))
-    except Exception:
-        pass
-    try:
-        votes.append(_predict_transformer(text))
-    except Exception:
-        pass
-
-    if not votes:
-        raise RuntimeError("No backends available for ensemble.")
-
-    ai_sum = sum(v[1]["AI"] for v in votes)
-    human_sum = sum(v[1]["Human"] for v in votes)
-    n = float(len(votes))
-    probs = {"AI": ai_sum / n, "Human": human_sum / n}
-    label = _choose_label(probs)
-    used = [v[2]["backend"] for v in votes]
-    runtime = round(sum(v[2].get("runtime_seconds", 0.0) for v in votes), 4)
-    return label, probs, {
-        "backend": "ensemble",
-        "used_backends": used,
-        "model_name": "avg(available)",
-        "runtime_seconds": runtime,
-        "timestamp": _now_iso(),
-    }
+    return label, probs, {"backend": "transformer", "device": str(_DEVICE), "runtime_seconds": round(time.time() - t0, 4), "timestamp": _now_iso()}
 
 
 # -----------------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------------
 def _resolve_backend_auto() -> str:
-    # Prefer transformer if available, else robust LR, else old LR
     if _TRANS_AVAILABLE:
         return "transformer"
     for p in ROBUST_PIPE_CANDIDATES:
@@ -275,24 +212,26 @@ def _resolve_backend_auto() -> str:
 
 
 def predict_text(text: str, backend: Optional[str] = None) -> Tuple[str, Dict[str, float], Dict]:
-    """
-    Predict label and probabilities.
-    backend ∈ {"auto","lr","old_lr","transformer","ensemble"}
-    """
     if not text or not text.strip():
         raise ValueError("Empty text")
-
     chosen = (backend or BACKEND_ENV or "auto").strip().lower()
     if chosen == "auto":
         chosen = _resolve_backend_auto()
-
     if chosen in ("lr", "robust_lr"):
         return _predict_robust_lr(text)
     if chosen in ("old_lr", "lr_v1"):
         return _predict_old_lr(text)
     if chosen == "transformer":
         return _predict_transformer(text)
-    if chosen == "ensemble":
-        return _predict_ensemble(text)
-
     return _predict_robust_lr(text)
+
+
+# -----------------------------------------------------------------------------
+# Warmup transformer at startup
+# -----------------------------------------------------------------------------
+if BACKEND_ENV in ("transformer", "auto", "ensemble") and _TRANS_AVAILABLE:
+    try:
+        _load_transformer(prewarm=True)
+        print("[inference] Transformer model preloaded & warmed up")
+    except Exception as e:
+        print(f"[inference] Failed to preload transformer: {e}")
