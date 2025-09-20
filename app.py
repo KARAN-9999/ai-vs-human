@@ -459,8 +459,7 @@ from pydantic import BaseModel
 import joblib
 
 import src.inference as inf  # for transformer or LR fallback
-from scripts.fetch_model import ensure_model
-ensure_model()
+
 
 # Base paths
 BASE_DIR = Path(__file__).resolve().parent
