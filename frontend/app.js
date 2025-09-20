@@ -1,6 +1,6 @@
 // Minimal frontend — now with explainability and responsive improvements
 
-const apiBase = "ai-vs-human-production-2ef7.up.railway.app"; // same origin
+const apiBase = "https://ai-vs-human-production-2ef7.up.railway.app"; // same origin
 
 // DOM shorthand
 const $ = (id) => document.getElementById(id);
